@@ -145,5 +145,33 @@ log=$(ls -t runs/*/00a-clarify.r1.log | head -1)
 grep -q "CLARIFY_MODE: light" "$log" || fail "CLARIFY_MODE 没有透传进 prompt"
 ok "clarifyMode 已注入 prompt"
 
+
+echo "== 10. 多项目：同一个工具，两个项目各自的配置 =="
+rm -rf runs handoff
+mkdir -p "$TMP/p1" "$TMP/p2"
+for proj in "$TMP/p1" "$TMP/p2"; do
+  printf '{\n  "defaults": { "agent": "stub", "effort": "medium" },\n  "roles": {}\n}\n' \
+    > "$proj/.agent-relay.json"
+done
+./scripts/run-plain.sh --project "$TMP/p1" --only-node 01-fe-design --yes >/dev/null 2>&1 || fail "p1 跑失败"
+./scripts/run-plain.sh --project "$TMP/p2" --only-node 02-be-design --yes >/dev/null 2>&1 || fail "p2 跑失败"
+[[ -s "$TMP/p1/handoff/01-fe-design.md" ]] || fail "p1 没产物"
+[[ -s "$TMP/p2/handoff/02-be-design.md" ]] || fail "p2 没产物"
+[[ -e "$TMP/p2/handoff/01-fe-design.md" ]] && fail "p1 的产物串到 p2 了"
+[[ -e "handoff/01-fe-design.md" ]] && fail "产物不该落在 relay 仓库里"
+ok "两个项目各跑各的，产物不串"
+
+out=$(./scripts/render.sh --project "$TMP/p1" 2>&1)
+grep -q "$TMP/p1/.agent-relay.json" <<<"$out" || fail "--project 没有用上 .agent-relay.json"
+ok "--project 读到了项目内配置"
+
+echo "== 11. 显式 --config =="
+rm -rf runs handoff
+printf '{\n  "defaults": { "agent": "stub" },\n  "roles": {},\n  "options": { "projectRoot": "%s" }\n}\n' "$TMP/proj" \
+  > "$TMP/ci-config.json"
+./scripts/run-plain.sh --config "$TMP/ci-config.json" --only-node 01-fe-design --yes >/dev/null 2>&1 || fail "--config 跑失败"
+[[ -s "$TMP/proj/handoff/01-fe-design.md" ]] || fail "--config 的 projectRoot 没生效"
+ok "--config 生效"
+
 echo
 echo "全部通过。"

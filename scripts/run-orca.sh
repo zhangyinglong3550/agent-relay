@@ -40,6 +40,7 @@ sys.path.insert(0, "scripts")
 import relay  # 复用 relay.py 的 prompt 组装，保证两种 runner 产出的 spec 完全一致
 
 relay.PIPELINE = pipeline
+relay.CURRENT_OPTIONS = local.get("options") or {}
 os.makedirs("specs", exist_ok=True)
 
 ID_HELPER = r'''

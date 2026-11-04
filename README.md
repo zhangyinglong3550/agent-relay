@@ -100,6 +100,15 @@ pipeline.local.json      你的机器：每个角色用哪个 agent / 模型 / �
 adapters.json            各家 CLI 怎么注入 prompt / model / effort      ← 团队共享
 ```
 
+**一个工具，多个项目。** 工具装在 `~/tools/agent-relay` 一份就够，每个项目在自己的根目录放一个 `.agent-relay.json`：
+
+```bash
+./scripts/run-plain.sh --project ~/code/project-a   # 自动读 project-a/.agent-relay.json
+./scripts/run-plain.sh --project ~/code/project-b
+```
+
+优先级：`--config` > `$RELAY_CONFIG` > `<project>/.agent-relay.json` > 仓库自带的 `pipeline.local.json`。没写 `projectRoot` 时，`--project` 会替你补上。
+
 结构是共享的，**人和机器是私有的**。同事之间共享 `pipeline.json` 和 `adapters.json`，各自维护 `pipeline.local.json`。
 
 ```json

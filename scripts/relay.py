@@ -61,7 +61,48 @@ def work_root(options):
         return ROOT
     if raw.startswith("~"):
         raw = os.path.expanduser(raw)
-    return os.path.abspath(os.path.join(ROOT, raw))
+    return os.path.abspath(os.path.join(CONFIG_DIR, raw))
+
+
+def resolve_local(args):
+    """决定这次用哪份本地配置，返回 (config, 来源说明)。
+
+    优先级：--config > $RELAY_CONFIG > <project>/.agent-relay.json > 仓库的 pipeline.local.json
+    没写 projectRoot 时，--project 会把它补上。
+    """
+    global CONFIG_DIR
+
+    explicit = getattr(args, "config", None) or os.environ.get("RELAY_CONFIG")
+    project = getattr(args, "project", None)
+    if project:
+        project = os.path.abspath(os.path.expanduser(project))
+        if not os.path.isdir(project):
+            sys.exit(f"{C['err']}--project 指向的目录不存在: {project}{C['r']}")
+
+    path = explicit
+    if not path and project:
+        candidate = os.path.join(project, ".agent-relay.json")
+        if os.path.exists(candidate):
+            path = candidate
+
+    if path:
+        path = os.path.abspath(os.path.expanduser(path))
+        if not os.path.exists(path):
+            sys.exit(f"{C['err']}配置文件不存在: {path}{C['r']}")
+        with open(path, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        CONFIG_DIR = os.path.dirname(path)
+        source = path
+    else:
+        cfg = load("pipeline.local.json", optional=True) or {}
+        CONFIG_DIR = ROOT
+        source = os.path.join(ROOT, "pipeline.local.json")
+
+    cfg.setdefault("options", {})
+    if project and not cfg["options"].get("projectRoot"):
+        cfg["options"]["projectRoot"] = project
+
+    return cfg, source
 
 
 def wpath(base, rel):
@@ -209,13 +250,14 @@ def build_prompt(node, entry, cwd, extra=None, previous=None, answers=None):
 
 def cmd_render(args):
     pipeline = load("pipeline.json")
-    local = load("pipeline.local.json", optional=True) or {}
+    local, source = resolve_local(args)
     adapters = load_adapters()
     plan = resolve(pipeline, local, adapters, args.only_agent)
     options = local.get("options") or {}
     base = work_root(options)
 
-    print(f"{C['b']}执行计划{C['r']}  ({len(plan)} 个节点)  {C['dim']}产物根: {base}{C['r']}\n")
+    print(f"{C['b']}执行计划{C['r']}  ({len(plan)} 个节点)  {C['dim']}产物根: {base}{C['r']}")
+    print(f"{C['dim']}配置: {source}{C['r']}\n")
     head = "".join([pad("ID", 22), pad("ROLE", 26), pad("AGENT", 10),
                     pad("MODEL", 18), pad("EFFORT", 8), "DEPS"])
     print(C["b"] + head + C["r"])
@@ -247,7 +289,7 @@ def cmd_render(args):
 def cmd_doctor(args):
     pipeline = load("pipeline.json")
     adapters = load_adapters()
-    local = load("pipeline.local.json", optional=True)
+    local, source = resolve_local(args)
 
     problems, warnings, notes = [], [], []
 
@@ -271,6 +313,7 @@ def cmd_doctor(args):
         used = sorted({e["agent"] for e in plan if e["kind"] == "agent" and e.get("agent")})
         options = local.get("options") or {}
         base = work_root(options)
+        print(f"   配置: {source}")
         print(f"   角色数: {len(pipeline.get('roles', {}))}   使用中的 Agent: {', '.join(used) or '无'}")
         print(f"   产物根: {base}" + ("" if base == ROOT else f"  {C['dim']}(options.projectRoot){C['r']}"))
         if base != ROOT and not os.path.isdir(base):
@@ -350,7 +393,7 @@ def topo(nodes):
 
 def cmd_run(args):
     pipeline = load("pipeline.json")
-    local = load("pipeline.local.json")
+    local, source = resolve_local(args)
     adapters = load_adapters()
     options = local.get("options") or {}
 
@@ -382,7 +425,7 @@ def cmd_run(args):
             json.dump(state, fh, ensure_ascii=False, indent=2)
 
     save()
-    print(f"{C['dim']}产物根: {base}{C['r']}")
+    print(f"{C['dim']}产物根: {base}    配置: {source}{C['r']}")
 
     started = False
     for node in order:
@@ -542,6 +585,7 @@ def cmd_run(args):
 
 PIPELINE = None
 CURRENT_OPTIONS = {}
+CONFIG_DIR = ROOT
 
 
 def main():
@@ -550,10 +594,14 @@ def main():
 
     p = sub.add_parser("render", help="打印执行计划")
     p.add_argument("--only-agent", help="强制所有角色使用同一个 agent（用于验证退化）")
+    p.add_argument("--project", help="业务项目目录；会读它下面的 .agent-relay.json")
+    p.add_argument("--config", help="显式指定本地配置文件")
     p.set_defaults(func=cmd_render)
 
     p = sub.add_parser("doctor", help="检查环境与配置")
     p.add_argument("--only-agent", help="按「只有一个 agent」模拟")
+    p.add_argument("--project", help="业务项目目录")
+    p.add_argument("--config", help="显式指定本地配置文件")
     p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("run", help="顺序执行")
@@ -566,13 +614,13 @@ def main():
     p.add_argument("--keep-going", action="store_true", help="某节点失败也继续")
     p.add_argument("--cwd", help="Agent 工作目录（相对产物根）")
     p.add_argument("--timeout", type=int, default=45 * 60, help="单节点超时秒数")
+    p.add_argument("--project", help="业务项目目录；会读它下面的 .agent-relay.json")
+    p.add_argument("--config", help="显式指定本地配置文件")
     p.set_defaults(func=cmd_run)
 
     args = parser.parse_args()
     global PIPELINE
     PIPELINE = load("pipeline.json")
-    local = load("pipeline.local.json", optional=True) or {}
-    CURRENT_OPTIONS = local.get("options") or {}
     return args.func(args)
 
 

@@ -1,5 +1,19 @@
 # 变更记录
 
+## 0.2.1
+
+**新增**
+
+- **多项目**：`--project <dir>` 读项目根的 `.agent-relay.json`，并自动把 `projectRoot` 补成该目录。
+  `--config <file>` 和 `$RELAY_CONFIG` 可显式指定配置。优先级：
+  `--config` > `$RELAY_CONFIG` > `<project>/.agent-relay.json` > 仓库的 `pipeline.local.json`。
+- 相对路径的 `projectRoot` 改为按配置文件所在目录解析（之前按仓库目录）。
+- `render.sh` / `doctor.sh` 会打印这次用的是哪份配置。
+
+**测试**
+
+- smoke 扩到 11 段：两个项目各跑各的、产物不串；`--config` 生效。
+
 ## 0.2.0
 
 **新增**

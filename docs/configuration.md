@@ -150,6 +150,46 @@
 
 ---
 
+## 3.5 多项目
+
+`projectRoot` 一个文件只能指一个项目。真正的做法是**每个项目带自己的配置**，工具只装一份。
+
+在项目根放 `.agent-relay.json`（内容和 `pipeline.local.json` 一样，通常更短）：
+
+```json
+{
+  "defaults": { "agent": "claude", "effort": "medium" },
+  "roles": { "clarify": { "model": "opus", "effort": "high" } }
+}
+```
+
+然后：
+
+```bash
+./scripts/run-plain.sh --project ~/code/project-a
+```
+
+`--project` 做两件事：
+
+1. 读 `~/code/project-a/.agent-relay.json`（没有就退回仓库自带的配置）
+2. 把 `projectRoot` 补成 `~/code/project-a`——产物和 Agent 工作目录都在这
+
+**优先级**：
+
+```
+--config <file>  >  $RELAY_CONFIG  >  <project>/.agent-relay.json  >  仓库的 pipeline.local.json
+```
+
+相对路径的 `projectRoot` 按**配置文件所在目录**解析，不按仓库目录——所以 `.agent-relay.json` 里可以直接写 `"projectRoot": "."`。
+
+CI 里用环境变量更省事：
+
+```bash
+RELAY_CONFIG=./ci/relay.json ./scripts/run-plain.sh --only-node 01-fe-design
+```
+
+---
+
 ## 4. 三档退化
 
 | 档 | 判定 | 自动发生什么 |
