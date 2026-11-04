@@ -145,6 +145,8 @@ references/            契约清单、正确性九项、复杂度审计协议
 docs/                  概念、配置、runner、设计取舍
 scripts/               doctor / render / run-plain / run-orca
 examples/              单 Agent、双 Agent 的配置样例
+tests/                 用 stub agent 跑的端到端冒烟（不需要 API key）
+AGENTS.md              给「修改本仓库」的 Agent 的约定
 ```
 
 ---
