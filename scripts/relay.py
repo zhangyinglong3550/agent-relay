@@ -20,25 +20,22 @@ import unicodedata
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 HUMAN = "human"
+PENDING = "待确认"
+
 C = {
     "dim": "\033[2m", "b": "\033[1m", "r": "\033[0m",
     "ok": "\033[32m", "warn": "\033[33m", "err": "\033[31m", "cyan": "\033[36m",
 }
 
 
+# ---------------------------------------------------------------- 基础
+
 def pad(text, width):
     """按终端显示宽度左对齐补齐（CJK 字符占两列）。"""
     text = str(text)
     shown = sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
     return text + " " * max(0, width - shown)
-
-
-def load_adapters():
-    """读 adapters.json，丢掉 $comment 这类元字段。"""
-    raw = load("adapters.json")
-    return {k: v for k, v in raw.items() if not k.startswith("$")}
 
 
 def load(name, optional=False):
@@ -51,10 +48,29 @@ def load(name, optional=False):
         return json.load(fh)
 
 
-# ---------------------------------------------------------------- resolve
+def load_adapters():
+    """读 adapters.json，丢掉 $comment 这类元字段。"""
+    raw = load("adapters.json")
+    return {k: v for k, v in raw.items() if not k.startswith("$")}
+
+
+def work_root(options):
+    """产物与 Agent 工作目录的根。默认是仓库本身，可用 options.projectRoot 指向业务项目。"""
+    raw = (options or {}).get("projectRoot")
+    if not raw:
+        return ROOT
+    if raw.startswith("~"):
+        raw = os.path.expanduser(raw)
+    return os.path.abspath(os.path.join(ROOT, raw))
+
+
+def wpath(base, rel):
+    return os.path.join(base, rel)
+
+
+# ---------------------------------------------------------------- 解析
 
 def resolve(pipeline, local, adapters, force_agent=None):
-    """把 DAG 节点 + 本地配置 + 适配器 解析成执行计划。"""
     defaults = local.get("defaults") or {}
     role_cfg = local.get("roles") or {}
     plan = []
@@ -76,12 +92,12 @@ def resolve(pipeline, local, adapters, force_agent=None):
         model = cfg.get("model")
         if force_agent and cfg.get("agent") and cfg["agent"] != force_agent:
             model = None
-        adapter = adapters.get(agent) if agent else None
+
         entry.update(
             agent=agent,
             model=model,
             effort=cfg.get("effort"),
-            adapter=adapter,
+            adapter=adapters.get(agent) if agent else None,
             tier=(pipeline.get("roles", {}).get(role) or {}).get("tier"),
         )
         plan.append(entry)
@@ -96,15 +112,13 @@ def build_cmd(entry, prompt, cwd):
     ignored = []
 
     def expand(tpl):
-        out = []
-        for token in tpl or []:
-            out.append(
-                token.replace("{prompt}", prompt)
-                .replace("{model}", model or "")
-                .replace("{effort}", effort or "")
-                .replace("{cwd}", cwd)
-            )
-        return out
+        return [
+            token.replace("{prompt}", prompt)
+            .replace("{model}", model or "")
+            .replace("{effort}", effort or "")
+            .replace("{cwd}", cwd)
+            for token in (tpl or [])
+        ]
 
     argv = [adapter["bin"]]
     argv += expand(adapter.get("extra"))
@@ -126,7 +140,30 @@ def build_cmd(entry, prompt, cwd):
 
 # ---------------------------------------------------------------- prompt
 
-def build_prompt(node, entry, cwd):
+def pending_items(text):
+    """从一段 markdown 里抽出「## 待确认」小节下的条目。"""
+    if not text:
+        return []
+    out, inside = [], False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            inside = stripped.lstrip("#").strip().startswith(PENDING)
+            continue
+        if not inside or not stripped:
+            continue
+        if stripped in ("无", "（无）", "(无)", "None", "none", "无。"):
+            continue
+        if stripped[0] in "-*" and len(stripped) > 1:
+            out.append(stripped[1:].strip())
+        elif stripped[0].isdigit() and stripped[1:2] in (".", ")") and len(stripped) > 2:
+            out.append(stripped[2:].strip())
+        elif stripped[0].isdigit() and stripped[1:3] in (". ", ") "):
+            out.append(stripped[3:].strip())
+    return out
+
+
+def build_prompt(node, entry, cwd, extra=None, previous=None, answers=None):
     stage = os.path.join(ROOT, node["stage"])
     body = open(stage, encoding="utf-8").read() if os.path.exists(stage) else ""
 
@@ -136,41 +173,51 @@ def build_prompt(node, entry, cwd):
         lines.append(f"- 角色: {node['role']}（能力档 {entry.get('tier')}）")
     for key, value in (node.get("vars") or {}).items():
         lines.append(f"- {key}: {value}")
+    for key, value in (extra or {}).items():
+        lines.append(f"- {key}: {value}")
     lines.append(f"- 工作目录: {cwd}")
 
+    base = work_root(CURRENT_OPTIONS)
     deps = node.get("deps") or []
     if deps:
         lines += ["", "### 上游交接物（只读，必须全部读一遍）", ""]
         for dep in deps:
             dep_node = next((n for n in PIPELINE["nodes"] if n["id"] == dep), None)
             for produced in (dep_node or {}).get("produces", []):
-                lines.append(f"- {produced}")
+                lines.append(f"- {wpath(base, produced)}")
+
+    if previous:
+        lines += ["", "### 上一轮你的输出（本轮在此基础上收敛，不要推翻已确认的部分）",
+                  "", previous.strip()[:6000]]
+    if answers:
+        lines += ["", "### 用户对上轮待确认项的回答", "", answers.strip()[:6000]]
 
     produces = node.get("produces") or []
     if produces:
         lines += ["", "### 交付要求", ""]
         lines.append("把结果作为**本次回复的正文**输出，不要写到别处；运行器会把它落盘到：")
         for produced in produces:
-            lines.append(f"- {produced}")
+            lines.append(f"- {wpath(base, produced)}")
         lines.append("")
-        lines.append("如果需要人拍板，在正文最后单列一节 `## 待确认`，逐条列出问题与你的建议。")
+        lines.append(f"如果需要人拍板，在正文最后单列一节 `## {PENDING}`，逐条列出问题与你的建议。")
+        lines.append(f"没有任何待确认项时，写 `## {PENDING}` 并在下一行写「无」。")
 
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------- commands
+# ---------------------------------------------------------------- render
 
 def cmd_render(args):
     pipeline = load("pipeline.json")
     local = load("pipeline.local.json", optional=True) or {}
     adapters = load_adapters()
     plan = resolve(pipeline, local, adapters, args.only_agent)
+    options = local.get("options") or {}
+    base = work_root(options)
 
-    print(f"{C['b']}执行计划{C['r']}  ({len(plan)} 个节点)\n")
-    head = "".join([
-        pad("ID", 22), pad("ROLE", 26), pad("AGENT", 10),
-        pad("MODEL", 18), pad("EFFORT", 8), "DEPS",
-    ])
+    print(f"{C['b']}执行计划{C['r']}  ({len(plan)} 个节点)  {C['dim']}产物根: {base}{C['r']}\n")
+    head = "".join([pad("ID", 22), pad("ROLE", 26), pad("AGENT", 10),
+                    pad("MODEL", 18), pad("EFFORT", 8), "DEPS"])
     print(C["b"] + head + C["r"])
     print(C["dim"] + "-" * 90 + C["r"])
 
@@ -178,12 +225,9 @@ def cmd_render(args):
         node = entry["node"]
         gate = " ⛩" if entry["kind"] == HUMAN else ""
         role = (entry.get("role") or "human") + gate
-        agent = entry.get("agent") or "-"
-        model = entry.get("model") or "-"
-        effort = entry.get("effort") or "-"
-        deps = ",".join(node.get("deps") or []) or "-"
-        print(pad(node["id"], 22) + pad(role, 26) + pad(agent, 10)
-              + pad(model, 18) + pad(effort, 8) + deps)
+        print(pad(node["id"], 22) + pad(role, 26) + pad(entry.get("agent") or "-", 10)
+              + pad(entry.get("model") or "-", 18) + pad(entry.get("effort") or "-", 8)
+              + (",".join(node.get("deps") or []) or "-"))
 
     print()
     for entry in plan:
@@ -193,8 +237,12 @@ def cmd_render(args):
         for field in ignored:
             print(f"{C['warn']}! {entry['node']['id']}: {entry['agent']} 不支持 {field}，"
                   f"将使用它自身配置{C['r']}")
+    print(f"{C['dim']}澄清强度: {options.get('clarifyMode', 'auto')}"
+          f"    答复文件: {options.get('answersFile', 'handoff/00a-answers.md')}{C['r']}")
     return 0
 
+
+# ---------------------------------------------------------------- doctor
 
 def cmd_doctor(args):
     pipeline = load("pipeline.json")
@@ -214,14 +262,20 @@ def cmd_doctor(args):
         problems.append("一个 Agent 都没检测到")
 
     print(f"\n{C['b']}2) 配置{C['r']}")
+    plan = []
     if not local:
         problems.append("缺少 pipeline.local.json（从 pipeline.local.example.json 复制）")
         print(f"   {C['err']}未找到 pipeline.local.json{C['r']}")
-        plan = []
     else:
         plan = resolve(pipeline, local, adapters, args.only_agent)
         used = sorted({e["agent"] for e in plan if e["kind"] == "agent" and e.get("agent")})
+        options = local.get("options") or {}
+        base = work_root(options)
         print(f"   角色数: {len(pipeline.get('roles', {}))}   使用中的 Agent: {', '.join(used) or '无'}")
+        print(f"   产物根: {base}" + ("" if base == ROOT else f"  {C['dim']}(options.projectRoot){C['r']}"))
+        if base != ROOT and not os.path.isdir(base):
+            problems.append(f"options.projectRoot 指向的目录不存在: {base}")
+        print(f"   澄清强度: {options.get('clarifyMode', 'auto')}")
 
         for entry in plan:
             node, role = entry["node"], entry.get("role")
@@ -237,8 +291,8 @@ def cmd_doctor(args):
                 problems.append(f"{node['id']}: {entry['agent']} 未安装（{adapters[entry['agent']]['bin']}）")
             _, ignored = build_cmd(entry, "<prompt>", os.getcwd())
             if ignored:
-                label = "/".join(ignored)
-                warnings.append(f"{node['id']}: {entry['agent']} 无法通过命令行注入 {label}，会用它自身配置")
+                warnings.append(f"{node['id']}: {entry['agent']} 无法通过命令行注入 "
+                                f"{'/'.join(ignored)}，会用它自身配置")
 
     print(f"\n{C['b']}3) 能力档{C['r']}")
     if plan:
@@ -253,19 +307,13 @@ def cmd_doctor(args):
 
     print(f"\n{C['b']}4) 风险{C['r']}")
     if plan:
-        dev = {e["agent"] for e in plan if e.get("role", "") and str(e.get("role")).startswith("dev")}
+        dev = {e["agent"] for e in plan if e.get("role") and str(e["role"]).startswith("dev")}
         rev = {e["agent"] for e in plan if e.get("role") == "review_correctness"}
         if rev and dev and rev & dev:
-            warnings.append(f"正确性评审与开发使用同一个 Agent（{', '.join(rev & dev)}），"
-                            f"评审会退化为确认")
+            warnings.append(f"正确性评审与开发使用同一个 Agent（{', '.join(rev & dev)}），评审会退化为确认")
         for key, adapter in adapters.items():
             if detected.get(key) and adapter.get("verified") is None:
                 notes.append(f"{key} 的调用方式未核对（verified=null），首次使用先跑一次最小任务")
-        for entry in plan:
-            if entry["kind"] != "agent" or not entry.get("agent"):
-                continue
-            if entry["node"]["id"].startswith(("08", "09", "10")) and entry.get("model"):
-                pass
 
     def dump(title, items, color):
         if not items:
@@ -282,6 +330,8 @@ def cmd_doctor(args):
         print(f"\n{C['ok']}看起来可以跑。{C['r']}")
     return 1 if problems else 0
 
+
+# ---------------------------------------------------------------- run
 
 def topo(nodes):
     done, order, pending = set(), [], list(nodes)
@@ -302,22 +352,40 @@ def cmd_run(args):
     pipeline = load("pipeline.json")
     local = load("pipeline.local.json")
     adapters = load_adapters()
-    plan = {e["node"]["id"]: e for e in resolve(pipeline, local, adapters, args.only_agent)}
     options = local.get("options") or {}
+
+    global CURRENT_OPTIONS
+    CURRENT_OPTIONS = options
+    base = work_root(options)
+
+    plan = {e["node"]["id"]: e for e in resolve(pipeline, local, adapters, args.only_agent)}
+    nodes = pipeline["nodes"]
+
+    if args.only_node:
+        picked = [n for n in nodes if n["id"] == args.only_node]
+        if not picked:
+            sys.exit(f"{C['err']}没有这个节点: {args.only_node}{C['r']}")
+        order = picked
+    else:
+        if args.rounds and args.rounds > 1:
+            sys.exit(f"{C['err']}--rounds 只能和 --only-node 一起用{C['r']}")
+        order = topo(nodes)
 
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = os.path.join(ROOT, options.get("runDir", "runs"), run_id)
     os.makedirs(run_dir, exist_ok=True)
     state_path = os.path.join(run_dir, "state.json")
-    state = {"run": run_id, "nodes": {}, "startedAt": run_id}
+    state = {"run": run_id, "nodes": {}, "startedAt": run_id, "workRoot": base}
 
     def save():
         with open(state_path, "w", encoding="utf-8") as fh:
             json.dump(state, fh, ensure_ascii=False, indent=2)
 
     save()
+    print(f"{C['dim']}产物根: {base}{C['r']}")
+
     started = False
-    for node in topo(pipeline["nodes"]):
+    for node in order:
         if args.start_from and not started:
             started = node["id"] == args.start_from
             if not started:
@@ -325,13 +393,12 @@ def cmd_run(args):
         entry = plan[node["id"]]
         print(f"\n{C['b']}▶ {node['id']}{C['r']} {C['dim']}({entry.get('role') or 'human'}){C['r']}")
 
-        # ---- 人工闸门
         if entry["kind"] == HUMAN:
             gate = node.get("gate") or {}
             print(f"   {C['cyan']}{gate.get('prompt', '请确认后继续')}{C['r']}")
             if gate.get("check"):
                 target = gate["check"]
-                exists = os.path.exists(os.path.join(ROOT, target))
+                exists = os.path.exists(wpath(base, target))
                 mark = f"{C['ok']}存在{C['r']}" if exists else f"{C['err']}不存在{C['r']}"
                 print(f"   检查产物: {target} → {mark}")
             if args.yes:
@@ -347,7 +414,6 @@ def cmd_run(args):
             save()
             continue
 
-        # ---- Agent 节点
         adapter = entry.get("adapter")
         if not adapter:
             print(f"   {C['err']}没有可用的 agent，跳过{C['r']}")
@@ -355,67 +421,128 @@ def cmd_run(args):
             save()
             continue
 
-        cwd = os.path.abspath(os.path.join(ROOT, args.cwd or "."))
-        prompt = build_prompt(node, entry, cwd)
-        argv, ignored = build_cmd(entry, prompt, cwd)
+        cwd = os.path.abspath(os.path.join(base, args.cwd)) if args.cwd else base
+        if args.cwd and not os.path.isdir(cwd):
+            print(f"   {C['err']}工作目录不存在: {cwd}{C['r']}")
+            return 4
 
-        print(f"   {entry['agent']} {C['dim']}({entry.get('model') or 'default'}"
-              f" / effort={entry.get('effort') or 'default'}){C['r']}")
-        for field in ignored:
-            print(f"   {C['warn']}·{C['r']} {field} 无法注入，使用该 Agent 自身配置")
-
-        if args.dry_run:
-            print(f"   {C['dim']}{shlex.join(argv)[:200]}…{C['r']}")
-            state["nodes"][node["id"]] = {"status": "dry-run"}
-            save()
-            continue
-
-        log_path = os.path.join(run_dir, f"{node['id']}.log")
-        print(f"   {C['dim']}→ {os.path.relpath(log_path, ROOT)}{C['r']}")
-        try:
-            proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=args.timeout)
-        except subprocess.TimeoutExpired:
-            print(f"   {C['err']}超时（{args.timeout}s），停在这里{C['r']}")
-            state["nodes"][node["id"]] = {"status": "timeout"}
-            save()
-            return 3
-
-        with open(log_path, "w", encoding="utf-8") as fh:
-            fh.write(f"# argv\n{shlex.join(argv)}\n\n# stdout\n{proc.stdout}\n\n# stderr\n{proc.stderr}\n")
+        extra = {}
+        if node["id"].startswith("00a"):
+            extra["CLARIFY_MODE"] = options.get("clarifyMode", "auto")
 
         produces = node.get("produces") or []
-        if produces:
-            rel = produces[0]
-            if rel.endswith("/"):          # 目录型产物：落成 <dir>/<node>.md
-                rel = rel + node["id"] + ".md"
-            target = os.path.join(ROOT, rel)
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            with open(target, "w", encoding="utf-8") as fh:
-                fh.write(proc.stdout.strip() + "\n")
-            print(f"   {C['ok']}✓{C['r']} 写入 {rel}")
+        target_rel = produces[0] if produces else None
+        if target_rel and target_rel.endswith("/"):
+            target_rel = target_rel + node["id"] + ".md"
+        answers_rel = options.get("answersFile", "handoff/00a-answers.md")
 
-        ok = proc.returncode == 0 and proc.stdout.strip()
-        state["nodes"][node["id"]] = {
-            "status": "ok" if ok else "failed",
-            "exit": proc.returncode,
-            "agent": entry["agent"],
-            "model": entry.get("model"),
-            "effort": entry.get("effort"),
-            "at": datetime.now().isoformat(),
-        }
-        save()
+        rounds = max(1, args.rounds or 1)
+        previous, round_no, final_ok = None, 1, True
+        while True:
+            answers = None
+            if round_no > 1:
+                apath = wpath(base, answers_rel)
+                if os.path.exists(apath):
+                    answers = open(apath, encoding="utf-8").read()
 
-        if not ok:
-            print(f"   {C['err']}退出码 {proc.returncode}，见 {os.path.relpath(log_path, ROOT)}{C['r']}")
-            if not args.keep_going:
-                print(f"   {C['dim']}修好之后：./scripts/run-plain.sh --start-from {node['id']}{C['r']}")
-                return 1
+            prompt = build_prompt(node, entry, cwd, extra, previous, answers)
+            argv, ignored = build_cmd(entry, prompt, cwd)
 
-    print(f"\n{C['ok']}跑完了。产物见 handoff/ ，运行记录见 {os.path.relpath(run_dir, ROOT)}/{C['r']}")
+            print(f"   {entry['agent']} {C['dim']}({entry.get('model') or 'default'}"
+                  f" / effort={entry.get('effort') or 'default'}"
+                  f"{'' if rounds == 1 else f' / 第 {round_no} 轮'}){C['r']}")
+            for field in ignored:
+                print(f"   {C['warn']}·{C['r']} {field} 无法注入，使用该 Agent 自身配置")
+
+            if args.dry_run:
+                print(f"   {C['dim']}{shlex.join(argv)[:200]}…{C['r']}")
+                state["nodes"][node["id"]] = {"status": "dry-run"}
+                save()
+                break
+
+            log_path = os.path.join(run_dir, f"{node['id']}.r{round_no}.log")
+            print(f"   {C['dim']}→ {os.path.relpath(log_path, ROOT)}{C['r']}")
+            try:
+                proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
+                                      timeout=args.timeout)
+            except subprocess.TimeoutExpired:
+                print(f"   {C['err']}超时（{args.timeout}s），停在这里{C['r']}")
+                state["nodes"][node["id"]] = {"status": "timeout"}
+                save()
+                return 3
+
+            with open(log_path, "w", encoding="utf-8") as fh:
+                fh.write(f"# argv\n{shlex.join(argv)}\n\n# stdout\n{proc.stdout}\n\n# stderr\n{proc.stderr}\n")
+
+            if target_rel:
+                target = wpath(base, target_rel)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with open(target, "w", encoding="utf-8") as fh:
+                    fh.write(proc.stdout.strip() + "\n")
+                print(f"   {C['ok']}✓{C['r']} 写入 {target_rel}")
+
+            ok = proc.returncode == 0 and bool(proc.stdout.strip())
+            final_ok = ok
+            state["nodes"][node["id"]] = {
+                "status": "ok" if ok else "failed",
+                "rounds": round_no,
+                "exit": proc.returncode,
+                "agent": entry["agent"],
+                "model": entry.get("model"),
+                "effort": entry.get("effort"),
+                "at": datetime.now().isoformat(),
+            }
+            save()
+
+            if not ok:
+                print(f"   {C['err']}退出码 {proc.returncode}，见 {os.path.relpath(log_path, ROOT)}{C['r']}")
+                if not args.keep_going:
+                    return 1
+                break
+
+            previous = proc.stdout
+            pending = pending_items(proc.stdout) if target_rel else []
+            if not pending:
+                if rounds > 1:
+                    print(f"   {C['ok']}无待确认项，收敛于第 {round_no} 轮{C['r']}")
+                break
+            if round_no >= rounds:
+                print(f"   {C['warn']}还有 {len(pending)} 个待确认项，轮数用尽{C['r']}")
+                for item in pending[:5]:
+                    print(f"     - {item[:100]}")
+                break
+
+            print(f"   {C['warn']}有 {len(pending)} 个待确认项{C['r']}")
+            for item in pending[:5]:
+                print(f"     - {item[:100]}")
+            if args.yes:
+                print(f"   {C['dim']}--yes：直接进入下一轮{C['r']}")
+            else:
+                print(f"   把答复写进 {C['b']}{answers_rel}{C['r']} 后回车继续，Ctrl-C 停在这里")
+                try:
+                    input("   ")
+                except (EOFError, KeyboardInterrupt):
+                    print(f"\n{C['warn']}已停在 {node['id']}（第 {round_no} 轮）{C['r']}")
+                    save()
+                    return 2
+            round_no += 1
+
+        if args.only_node:
+            continue
+        if not final_ok and not args.keep_going:
+            print(f"   {C['dim']}修好之后：./scripts/run-plain.sh --start-from {node['id']}{C['r']}")
+            return 1
+
+    print(f"\n{C['ok']}跑完了。产物见 {base} ，运行记录见 "
+          f"{os.path.relpath(run_dir, ROOT)}/{C['r']}")
     return 0
 
 
 # ---------------------------------------------------------------- main
+
+PIPELINE = None
+CURRENT_OPTIONS = {}
+
 
 def main():
     parser = argparse.ArgumentParser(prog="relay", description="Agent Relay")
@@ -431,21 +558,23 @@ def main():
 
     p = sub.add_parser("run", help="顺序执行")
     p.add_argument("--dry-run", action="store_true", help="只打印命令，不执行")
-    p.add_argument("--yes", action="store_true", help="自动通过人工闸门（危险）")
+    p.add_argument("--yes", action="store_true", help="自动通过人工闸门与轮次暂停（危险）")
     p.add_argument("--start-from", help="从某个节点开始（断点续跑）")
+    p.add_argument("--only-node", help="只跑一个节点，可配合 --rounds 多轮收敛")
+    p.add_argument("--rounds", type=int, default=1, help="同一节点最多跑几轮（需要 --only-node）")
     p.add_argument("--only-agent", help="强制所有角色使用同一个 agent")
     p.add_argument("--keep-going", action="store_true", help="某节点失败也继续")
-    p.add_argument("--cwd", help="Agent 的工作目录，默认仓库根")
+    p.add_argument("--cwd", help="Agent 工作目录（相对产物根）")
     p.add_argument("--timeout", type=int, default=45 * 60, help="单节点超时秒数")
     p.set_defaults(func=cmd_run)
 
     args = parser.parse_args()
     global PIPELINE
     PIPELINE = load("pipeline.json")
+    local = load("pipeline.local.json", optional=True) or {}
+    CURRENT_OPTIONS = local.get("options") or {}
     return args.func(args)
 
-
-PIPELINE = None
 
 if __name__ == "__main__":
     sys.exit(main())

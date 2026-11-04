@@ -100,6 +100,9 @@
     "e2e_run":   { "agent": "dsh", "effort": "low" }
   },
   "options": {
+    "projectRoot": "/path/to/your/project",
+    "clarifyMode": "auto",
+    "answersFile": "handoff/00a-answers.md",
     "branchPrefix": "relay/",
     "runDir": "runs",
     "stopAtGates": true,
@@ -112,6 +115,29 @@
 - 没写的字段继承 `defaults`
 - `agent` 必须是 `adapters.json` 里存在的 key
 - 缺角色 → `doctor.sh` 报问题，不让跑
+
+### options 说明
+
+| 键 | 作用 | 默认 |
+|---|---|---|
+| **`projectRoot`** | **产物和 Agent 工作目录的根**。指向你的业务项目，`handoff/`、`contract/`、`e2e/` 就落在项目里，而不是落在 agent-relay 仓库里 | `null`（= 仓库自己） |
+| **`clarifyMode`** | 澄清强度：`auto` 按需求大小自动判档，或强制 `light` / `standard` / `deep` | `auto` |
+| **`answersFile`** | 多轮澄清时，你写答复的文件 | `handoff/00a-answers.md` |
+| `branchPrefix` | 集成分支前缀 | `relay/` |
+| `runDir` | 运行记录目录（始终在仓库内，不进 git） | `runs` |
+| `stopAtGates` | 到人工闸门是否暂停 | `true` |
+| `maxLoopRounds` | 修复回路上限，超过就升级到人 | `2` |
+| `wallClockMinutesPerNode` | 给人看的预期时长，不强制 | `45` |
+
+`projectRoot` 是最容易搞错的一个。不设它，你会在 agent-relay 目录里看到 `handoff/`，而代码改动在另一个仓库——产物和代码分家，评审那站读 diff 会读错地方。
+
+```bash
+# 设对之后，render 第一行会显示
+执行计划  (12 个节点)  产物根: /path/to/your/project
+```
+
+`clarifyMode` 的判档规则写在 `stages/00a-clarify.md`：**单文件改动不问、单模块问一轮、跨前后端才走三轮**。拿不准按 `standard`，不要默认 `deep`。
+
 
 ### 校验
 

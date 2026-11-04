@@ -22,10 +22,13 @@
   },
 
   "options": {
+    "projectRoot": null,
     "branchPrefix": "relay/",
     "runDir": "runs",
     "stopAtGates": true,
     "maxLoopRounds": 2,
-    "wallClockMinutesPerNode": 45
+    "wallClockMinutesPerNode": 45,
+    "clarifyMode": "auto",
+    "answersFile": "handoff/00a-answers.md"
   }
 }

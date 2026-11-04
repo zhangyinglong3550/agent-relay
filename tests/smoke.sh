@@ -15,29 +15,39 @@ fail() { echo "✗ $*" >&2; exit 1; }
 ok()   { echo "✓ $*"; }
 
 echo "== 准备 =="
-mkdir -p "$TMP/bin" "$TMP/repo"
+mkdir -p "$TMP/bin" "$TMP/repo" "$TMP/proj"
 cp -R "$SRC"/. "$TMP/repo/"
 rm -rf "$TMP/repo/runs" "$TMP/repo/handoff" "$TMP/repo/contract" "$TMP/repo/e2e" "$TMP/repo/specs"
 
+# 假 Agent：第二轮（prompt 里带上一轮输出）收敛成「无待确认」
 cat > "$TMP/bin/relay-stub" <<'STUB'
 #!/usr/bin/env bash
 prompt="$1"
 echo "# STUB 产出"
 echo
 echo "收到的说明长度: ${#prompt}"
-echo "其余参数: ${*:2}"
+echo
+echo "## 待确认"
+if [[ "$prompt" == *"### 上一轮你的输出"* ]]; then
+  echo "无"
+else
+  echo "- Q1: 要不要支持导出 PDF？（高影响，建议：不支持）"
+fi
 STUB
 chmod +x "$TMP/bin/relay-stub"
 export PATH="$TMP/bin:$PATH"
 
-cat > "$TMP/repo/pipeline.local.json" <<'JSON'
-{
-  "defaults": { "agent": "stub", "effort": "medium" },
-  "roles": {},
-  "options": { "stopAtGates": true }
+# $1 是塞进 options 的额外键值对（不带引号转义），留空则用默认
+write_local() {
+  if [[ -n "${1:-}" ]]; then
+    printf '{\n  "defaults": { "agent": "stub", "effort": "medium" },\n  "roles": {},\n  "options": { "stopAtGates": true, %s }\n}\n' "$1" \
+      > "$TMP/repo/pipeline.local.json"
+  else
+    printf '{\n  "defaults": { "agent": "stub", "effort": "medium" },\n  "roles": {},\n  "options": { "stopAtGates": true }\n}\n' \
+      > "$TMP/repo/pipeline.local.json"
+  fi
 }
-JSON
-
+write_local
 cd "$TMP/repo"
 
 echo "== 1. render =="
@@ -68,20 +78,14 @@ grep -q "xxx" <<<"$out" && fail "模拟模式下不该沿用别的厂商的模�
 ok "模型名已丢弃"
 
 echo "== 5. 全流程 dry-run =="
+write_local
 out=$(./scripts/run-plain.sh --dry-run --yes --only-agent stub 2>&1)
 grep -q "▶ 00a-clarify" <<<"$out" || fail "未从 00a 开始"
 grep -q "▶ 10-e2e-run" <<<"$out" || fail "未走到 10"
 ok "12 个节点按依赖顺序走完"
 
 echo "== 6. 真跑（stub 接管全部角色）=="
-rm -rf runs handoff contract e2e   # dry-run 也会留 run 目录，清掉免得比错
-cat > pipeline.local.json <<'JSON'
-{
-  "defaults": { "agent": "stub", "effort": "medium" },
-  "roles": {},
-  "options": { "stopAtGates": true }
-}
-JSON
+rm -rf runs handoff contract e2e
 ./scripts/run-plain.sh --yes >/dev/null 2>&1 || fail "run 失败"
 
 for f in handoff/00a-assumptions.md handoff/01-fe-design.md handoff/04-fe-dev.md \
@@ -104,6 +108,42 @@ assert len(ok) == 10, f"应有 10 个 agent 节点成功，实际 {len(ok)}"
 print(f"state ok: {len(ok)} agent 节点, {len(gates)} 个人工闸门")
 PY
 ok "state.json 记录正确"
+
+echo "== 7. 多轮收敛（--rounds）=="
+rm -rf runs handoff
+out=$(./scripts/run-plain.sh --only-node 00a-clarify --rounds 3 --yes 2>&1)
+grep -q "第 1 轮" <<<"$out" || fail "没有进入多轮模式"
+grep -q "收敛于第 2 轮" <<<"$out" || fail "第二轮未收敛"
+grep -q "Q1" <<<"$out" || fail "未把待确认项报出来"
+state=$(ls -t runs/*/state.json | head -1)
+python3 - "$state" <<'PY' || exit 1
+import json, sys
+d = json.load(open(sys.argv[1]))
+n = d["nodes"]["00a-clarify"]
+assert n["rounds"] == 2, f"应停在第 2 轮，实际 {n.get('rounds')}"
+assert n["status"] == "ok", n
+print("rounds ok: 2")
+PY
+ok "两轮后收敛"
+
+echo "== 8. projectRoot：产物跟着项目走 =="
+rm -rf runs handoff
+write_local "\"projectRoot\": \"$TMP/proj\""
+./scripts/run-plain.sh --only-node 01-fe-design --yes >/dev/null 2>&1 || fail "projectRoot 模式跑失败"
+[[ -s "$TMP/proj/handoff/01-fe-design.md" ]] || fail "产物没有落到 projectRoot"
+if [[ -e "handoff/01-fe-design.md" ]]; then fail "产物不该落在 relay 仓库里"; fi
+ok "产物落在 $TMP/proj"
+
+out=$(./scripts/render.sh 2>&1)
+grep -q "产物根: $TMP/proj" <<<"$out" || fail "render 未显示产物根"
+ok "render 显示了产物根"
+
+echo "== 9. 分诊档位透传 =="
+write_local "\"clarifyMode\": \"light\""
+./scripts/run-plain.sh --only-node 00a-clarify --yes >/dev/null 2>&1 || fail "light 档跑失败"
+log=$(ls -t runs/*/00a-clarify.r1.log | head -1)
+grep -q "CLARIFY_MODE: light" "$log" || fail "CLARIFY_MODE 没有透传进 prompt"
+ok "clarifyMode 已注入 prompt"
 
 echo
 echo "全部通过。"

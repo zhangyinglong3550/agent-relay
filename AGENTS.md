@@ -62,6 +62,8 @@
 
 **改流程结构**：只动 `pipeline.json`。加节点前先问"能不能塞进现有 stage"；答案是能，就别加——节点越多，人越容易放弃读输出。
 
+**改执行语义**：`--only-node` / `--rounds` / `projectRoot` 的逻辑都在 `scripts/relay.py`，动它要同时补 `tests/smoke.sh` 的对应段落——那里是行为契约。
+
 **写新 runner**：读 `pipeline.json` 做拓扑排序，按 `adapters.json` 拼命令，把 stdout 落到 `produces[0]`。`scripts/render.sh` 的输出就是你要的执行计划，照它实现即可。
 
 ## 写作风格（对 `stages/` 尤其重要）

@@ -1,5 +1,27 @@
 # 变更记录
 
+## 0.2.0
+
+**新增**
+
+- `options.projectRoot`：产物与 Agent 工作目录可以指向业务项目，不再只能跑在 relay 仓库里。
+  `render.sh` / `doctor.sh` 会显示产物根，`doctor.sh` 会校验目录是否存在。
+- `--only-node` + `--rounds N`：同一节点多轮收敛。第 1 轮出 `## 待确认` → 你写进
+  `options.answersFile` → 回车 → 下一轮带着答复继续，直到「无」。
+- `options.clarifyMode`：`auto` / `light` / `standard` / `deep`。**澄清按需求大小分诊**——
+  单文件改动不问、单模块问一轮、跨前后端才走三轮。档位透传进 prompt。
+- `stages/00a-clarify.md` 重写：分诊表、多轮规则（已确认的不许重问）、出口条件。
+
+**变更**
+
+- `--rounds` 必须配 `--only-node`，否则报错——整链多轮没有语义。
+- 运行日志改为 `runs/<id>/<node>.r<N>.log`，多轮各自留档。
+- `state.json` 节点记录新增 `rounds` 与 `workRoot`。
+
+**测试**
+
+- smoke 从 6 段扩到 9 段：多轮收敛、projectRoot、clarifyMode 透传。
+
 ## 0.1.0
 
 首个可用版本。

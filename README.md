@@ -60,13 +60,20 @@ cd agent-relay
 
 # 2. 生成你的本地配置
 cp pipeline.local.example.json pipeline.local.json
-$EDITOR pipeline.local.json
+$EDITOR pipeline.local.json          # 填 agent，并把 options.projectRoot 指向你的项目
 
 # 3. 不调 Agent，先看一遍解析出来的执行计划
-./scripts/render.sh
+./scripts/render.sh                  # 第一行会显示「产物根」
 
 # 4. 真跑
 ./scripts/run-plain.sh
+```
+
+澄清要一问一答，用多轮把它跑收敛：
+
+```bash
+./scripts/run-plain.sh --only-node 00a-clarify --rounds 3
+# 第 1 轮出问题清单 → 你写进 handoff/00a-answers.md → 回车 → 第 2 轮收敛
 ```
 
 `doctor.sh` 会告诉你三件事：检测到哪些 Agent、你的配置能跑哪一档、哪一步会被跳过。
