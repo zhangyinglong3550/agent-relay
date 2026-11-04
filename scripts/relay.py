@@ -105,6 +105,62 @@ def resolve_local(args):
     return cfg, source
 
 
+# ---------------------------------------------------------------- 节点裁剪
+
+SCOPE_PRESETS = {
+    "both": [],
+    "backend": ["01-fe-design", "04-fe-dev", "06-merge"],
+    "frontend": ["02-be-design", "05-be-dev", "06-merge"],
+}
+
+
+def skipped_ids(pipeline, options):
+    """按 options.scope / options.skip 算出要裁掉的节点。"""
+    allids = {n["id"] for n in pipeline["nodes"]}
+    scope = (options or {}).get("scope", "both")
+    if scope not in SCOPE_PRESETS:
+        sys.exit(f"{C['err']}未知的 scope: {scope}（可选 both / backend / frontend）{C['r']}")
+    ids = set(SCOPE_PRESETS[scope]) | set((options or {}).get("skip") or [])
+    unknown = ids - allids
+    if unknown:
+        sys.exit(f"{C['err']}skip 里有不存在的节点: {sorted(unknown)}{C['r']}")
+    return ids & allids
+
+
+def effective_nodes(pipeline, skipped):
+    """裁掉节点后重连依赖：被删节点的下游，直接连到它的上游。"""
+    by_id = {n["id"]: n for n in pipeline["nodes"]}
+
+    def bypass(dep, seen=()):
+        if dep not in skipped:
+            return [dep]
+        if dep in seen:
+            return []
+        out = []
+        for up in by_id[dep].get("deps") or []:
+            out += bypass(up, seen + (dep,))
+        return out
+
+    result = []
+    for node in pipeline["nodes"]:
+        if node["id"] in skipped:
+            continue
+        clone = dict(node)
+        deps = []
+        for dep in node.get("deps") or []:
+            for up in bypass(dep):
+                if up not in deps:
+                    deps.append(up)
+        clone["deps"] = deps
+        result.append(clone)
+    return result
+
+
+def active_pipeline(pipeline, options):
+    skipped = skipped_ids(pipeline, options)
+    return dict(pipeline, nodes=effective_nodes(pipeline, skipped)), skipped
+
+
 def wpath(base, rel):
     return os.path.join(base, rel)
 
@@ -252,8 +308,9 @@ def cmd_render(args):
     pipeline = load("pipeline.json")
     local, source = resolve_local(args)
     adapters = load_adapters()
-    plan = resolve(pipeline, local, adapters, args.only_agent)
     options = local.get("options") or {}
+    pipeline, skipped = active_pipeline(pipeline, options)
+    plan = resolve(pipeline, local, adapters, args.only_agent)
     base = work_root(options)
 
     print(f"{C['b']}执行计划{C['r']}  ({len(plan)} 个节点)  {C['dim']}产物根: {base}{C['r']}")
@@ -279,6 +336,9 @@ def cmd_render(args):
         for field in ignored:
             print(f"{C['warn']}! {entry['node']['id']}: {entry['agent']} 不支持 {field}，"
                   f"将使用它自身配置{C['r']}")
+    if skipped:
+        print(f"{C['warn']}已裁剪: {', '.join(sorted(skipped))}  "
+              f"{C['dim']}(scope={options.get('scope', 'both')}){C['r']}")
     print(f"{C['dim']}澄清强度: {options.get('clarifyMode', 'auto')}"
           f"    答复文件: {options.get('answersFile', 'handoff/00a-answers.md')}{C['r']}")
     return 0
@@ -290,6 +350,7 @@ def cmd_doctor(args):
     pipeline = load("pipeline.json")
     adapters = load_adapters()
     local, source = resolve_local(args)
+    pipeline, skipped = active_pipeline(pipeline, local.get("options") or {})
 
     problems, warnings, notes = [], [], []
 
@@ -318,7 +379,10 @@ def cmd_doctor(args):
         print(f"   产物根: {base}" + ("" if base == ROOT else f"  {C['dim']}(options.projectRoot){C['r']}"))
         if base != ROOT and not os.path.isdir(base):
             problems.append(f"options.projectRoot 指向的目录不存在: {base}")
-        print(f"   澄清强度: {options.get('clarifyMode', 'auto')}")
+        print(f"   澄清强度: {options.get('clarifyMode', 'auto')}"
+              f"   范围: {options.get('scope', 'both')}")
+        if skipped:
+            print(f"   {C['warn']}已裁剪节点: {', '.join(sorted(skipped))}{C['r']}")
 
         for entry in plan:
             node, role = entry["node"], entry.get("role")
@@ -401,6 +465,9 @@ def cmd_run(args):
     CURRENT_OPTIONS = options
     base = work_root(options)
 
+    pipeline, skipped = active_pipeline(pipeline, options)
+    global PIPELINE
+    PIPELINE = pipeline
     plan = {e["node"]["id"]: e for e in resolve(pipeline, local, adapters, args.only_agent)}
     nodes = pipeline["nodes"]
 
@@ -418,7 +485,8 @@ def cmd_run(args):
     run_dir = os.path.join(ROOT, options.get("runDir", "runs"), run_id)
     os.makedirs(run_dir, exist_ok=True)
     state_path = os.path.join(run_dir, "state.json")
-    state = {"run": run_id, "nodes": {}, "startedAt": run_id, "workRoot": base}
+    state = {"run": run_id, "nodes": {}, "startedAt": run_id,
+             "workRoot": base, "skipped": sorted(skipped)}
 
     def save():
         with open(state_path, "w", encoding="utf-8") as fh:
@@ -426,6 +494,9 @@ def cmd_run(args):
 
     save()
     print(f"{C['dim']}产物根: {base}    配置: {source}{C['r']}")
+    if skipped:
+        print(f"{C['warn']}已裁剪: {', '.join(sorted(skipped))}  "
+              f"{C['dim']}(scope={options.get('scope', 'both')}){C['r']}")
 
     started = False
     for node in order:

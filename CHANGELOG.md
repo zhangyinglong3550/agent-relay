@@ -1,5 +1,19 @@
 # 变更记录
 
+## 0.3.0
+
+**新增**
+
+- **单侧需求裁剪**：`options.scope` = `both` / `backend` / `frontend`，或 `options.skip` 指定节点。
+  被裁节点的下游自动连到它的上游（transitive bypass），不需要手改 `pipeline.json`。
+  `render.sh` / `doctor.sh` 会打印「已裁剪」，`state.json` 记录 `skipped`。
+- **Skill 入口**：`skill/SKILL.md` + `scripts/install-skill.sh`，符号链接安装，
+  不复制流程内容。Skill 只负责"该做什么、何时停"，调度仍在 `relay.py`。
+
+**测试**
+
+- smoke 扩到 12 段：`scope=backend` 裁掉 3 个节点、依赖重连、单栈跑通、产物不串。
+
 ## 0.2.1
 
 **新增**

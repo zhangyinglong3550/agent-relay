@@ -80,6 +80,20 @@ $EDITOR pipeline.local.json          # 填 agent，并把 options.projectRoot �
 
 ---
 
+## 作为 Skill 使用
+
+仓库自带一份 Skill 入口（`skill/SKILL.md`），装上是符号链接，改仓库即生效：
+
+```bash
+./scripts/install-skill.sh            # → ~/.agents/skills/agent-relay
+```
+
+装完之后，任何 Agent 听到「用 relay 做这个需求」就会读到它，知道该调哪个脚本、哪两个闸门必须停、失败怎么回灌。
+
+**Skill 是启动器，运行时是脚本。** 它不复制 `stages/`，只指向仓库——所以流程只有一份，不会分叉。
+
+---
+
 ## 三档能力（自动判定）
 
 | 档 | 手上有什么 | 会发生什么 |

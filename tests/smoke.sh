@@ -173,5 +173,31 @@ printf '{\n  "defaults": { "agent": "stub" },\n  "roles": {},\n  "options": { "p
 [[ -s "$TMP/proj/handoff/01-fe-design.md" ]] || fail "--config 的 projectRoot 没生效"
 ok "--config 生效"
 
+
+echo "== 12. 只做后端（scope=backend）=="
+rm -rf runs handoff
+write_local '"scope": "backend"'
+out=$(./scripts/render.sh 2>&1)
+grep -q "9 个节点" <<<"$out" || fail "后端单栈应是 9 个节点"
+grep -q "design_fe" <<<"$out" && fail "前端设计没被裁掉"
+grep -q "已裁剪" <<<"$out" || fail "没提示裁剪了什么"
+ok "裁剪 3 个前端节点，剩 9 个"
+
+./scripts/run-plain.sh --yes >/dev/null 2>&1 || fail "后端单栈跑失败"
+[[ -s handoff/05-be-dev.md ]] || fail "缺后端开发产物"
+[[ -e handoff/04-fe-dev.md ]] && fail "前端开发不该有产物"
+[[ -e handoff/06-merge.md ]] && fail "单栈不该有合并产物"
+state=$(ls -t runs/*/state.json | head -1)
+python3 - "$state" <<'CHECK' || exit 1
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert len(d["nodes"]) == 9, len(d["nodes"])
+assert set(d["skipped"]) == {"01-fe-design", "04-fe-dev", "06-merge"}, d["skipped"]
+gates = [k for k, v in d["nodes"].items() if v["status"] == "gate-passed"]
+assert set(gates) == {"00b-scope", "03-contract"}, gates
+print("backend scope ok: 9 节点, 2 闸门")
+CHECK
+ok "后端单栈跑通，依赖已重连"
+
 echo
 echo "全部通过。"
