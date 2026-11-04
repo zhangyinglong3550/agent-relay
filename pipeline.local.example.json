@@ -1,0 +1,31 @@
+{
+  "$comment": [
+    "复制成 pipeline.local.json 后填写。这个文件属于你的机器，不进 git。",
+    "role 里没写的字段会继承 defaults。",
+    "agent 必须是 adapters.json 里存在的 key；doctor.sh 会校验。"
+  ],
+
+  "defaults": {
+    "effort": "medium"
+  },
+
+  "roles": {
+    "clarify":            { "agent": "claude", "model": "opus",   "effort": "high" },
+    "design_fe":          { "agent": "claude", "model": "opus",   "effort": "high" },
+    "design_be":          { "agent": "codex",  "model": "gpt-5-codex", "effort": "high" },
+    "dev_fe":             { "agent": "kimi",   "model": "kimi-k2" },
+    "dev_be":             { "agent": "zcode" },
+    "e2e_author":         { "agent": "claude", "effort": "high" },
+    "review_complexity":  { "agent": "dsh",    "effort": "low" },
+    "review_correctness": { "agent": "codex",  "effort": "high" },
+    "e2e_run":            { "agent": "dsh",    "effort": "low" }
+  },
+
+  "options": {
+    "branchPrefix": "relay/",
+    "runDir": "runs",
+    "stopAtGates": true,
+    "maxLoopRounds": 2,
+    "wallClockMinutesPerNode": 45
+  }
+}

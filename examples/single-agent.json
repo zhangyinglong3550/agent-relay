@@ -1,0 +1,16 @@
+{
+  "$comment": "C 档：只有 Claude Code。复制为 pipeline.local.json 使用。注意：交叉互审会被跳过。",
+  "defaults": { "agent": "claude", "effort": "medium" },
+  "roles": {
+    "clarify":            { "model": "opus",   "effort": "high" },
+    "design_fe":          { "model": "opus",   "effort": "high" },
+    "design_be":          { "model": "opus",   "effort": "high" },
+    "dev_fe":             { "model": "sonnet", "effort": "medium" },
+    "dev_be":             { "model": "sonnet", "effort": "medium" },
+    "e2e_author":         { "model": "opus",   "effort": "high" },
+    "review_complexity":  { "model": "haiku",  "effort": "low" },
+    "review_correctness": { "model": "opus",   "effort": "high" },
+    "e2e_run":            { "model": "haiku",  "effort": "low" }
+  },
+  "options": { "stopAtGates": true, "maxLoopRounds": 2 }
+}

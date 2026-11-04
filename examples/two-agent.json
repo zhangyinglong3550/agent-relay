@@ -1,0 +1,16 @@
+{
+  "$comment": "B 档：Claude + Codex。复制为 pipeline.local.json 使用。交叉评审用另一种模型。",
+  "defaults": { "effort": "medium" },
+  "roles": {
+    "clarify":            { "agent": "claude", "model": "opus",          "effort": "high" },
+    "design_fe":          { "agent": "claude", "model": "opus",          "effort": "high" },
+    "design_be":          { "agent": "codex",  "model": "gpt-5-codex",   "effort": "high" },
+    "dev_fe":             { "agent": "claude", "model": "sonnet",        "effort": "medium" },
+    "dev_be":             { "agent": "codex",  "model": "gpt-5-codex",   "effort": "medium" },
+    "e2e_author":         { "agent": "claude", "model": "opus",          "effort": "high" },
+    "review_complexity":  { "agent": "codex",  "effort": "low" },
+    "review_correctness": { "agent": "claude", "model": "opus",          "effort": "high" },
+    "e2e_run":            { "agent": "codex",  "effort": "low" }
+  },
+  "options": { "stopAtGates": true, "maxLoopRounds": 2 }
+}

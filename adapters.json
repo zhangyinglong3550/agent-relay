@@ -1,0 +1,116 @@
+{
+  "$comment": [
+    "每个 Agent 如何被非交互调用，以及模型/思考等级能被注入到哪条通道。",
+    "argv 模板里的占位符：{prompt} {model} {effort} {cwd}",
+    "model / effort 为空数组表示该 CLI 没有这个参数，只能靠它自己的配置文件。",
+    "verified 记录了最后一次人工核对的时间，未核对的填 null，doctor.sh 会提示。"
+  ],
+
+  "claude": {
+    "title": "Claude Code",
+    "bin": "claude",
+    "prompt": ["-p", "{prompt}"],
+    "model": ["--model", "{model}"],
+    "effort": ["--effort", "{effort}"],
+    "resume": ["--continue"],
+    "extra": [],
+    "verified": "2026-11",
+    "notes": "非交互输出到 stdout。--effort 取值由 CLI 校验，建议 low/medium/high。"
+  },
+
+  "codex": {
+    "title": "OpenAI Codex",
+    "bin": "codex",
+    "prompt": ["exec", "{prompt}"],
+    "model": ["-m", "{model}"],
+    "effort": ["-c", "model_reasoning_effort={effort}"],
+    "resume": ["exec", "resume", "--last"],
+    "extra": [],
+    "verified": "2026-11",
+    "notes": "思考等级走 -c 配置键，不是独立 flag。"
+  },
+
+  "kimi": {
+    "title": "Kimi Code",
+    "bin": "kimi",
+    "prompt": ["-p", "{prompt}"],
+    "model": ["-m", "{model}"],
+    "effort": [],
+    "resume": ["-c"],
+    "extra": ["--auto"],
+    "verified": "2026-11",
+    "notes": "--auto 等于 Never Ask，无人值守必须加。思考等级由模型自身决定。"
+  },
+
+  "zcode": {
+    "title": "ZCode",
+    "bin": "zcode",
+    "prompt": ["-p", "{prompt}"],
+    "model": [],
+    "effort": [],
+    "resume": ["--resume", "{session}"],
+    "extra": ["--mode", "yolo"],
+    "verified": "2026-11",
+    "notes": "模型与权限模式在自身配置里；--mode yolo 仅对 -p 生效。"
+  },
+
+  "dsh": {
+    "title": "DeepSeek Harness",
+    "bin": "dsh",
+    "prompt": ["--profile", "headless", "{prompt}"],
+    "model": [],
+    "effort": [],
+    "resume": [],
+    "extra": [],
+    "verified": "2026-11",
+    "notes": "模型写在 profile 的 patch 层里；如需切换，替换 profile 或加 --patch。"
+  },
+
+  "pi": {
+    "title": "Pi",
+    "bin": "pi",
+    "prompt": ["--print", "{prompt}"],
+    "model": [],
+    "effort": [],
+    "resume": [],
+    "extra": [],
+    "verified": null,
+    "notes": "社区反馈可用，未在本仓库核对。"
+  },
+
+  "cursor": {
+    "title": "Cursor CLI",
+    "bin": "agent",
+    "prompt": ["-p", "{prompt}"],
+    "model": [],
+    "effort": [],
+    "resume": [],
+    "extra": ["--trust"],
+    "verified": null,
+    "notes": "--trust 跳过工作区信任询问，无人值守需要。"
+  },
+
+  "opencode": {
+    "title": "OpenCode",
+    "bin": "opencode",
+    "prompt": ["run", "{prompt}"],
+    "model": ["--model", "{model}"],
+    "effort": [],
+    "resume": [],
+    "extra": [],
+    "verified": null,
+    "notes": "未核对；不同版本子命令名可能不同。"
+  },
+
+  "stub": {
+    "title": "Stub（仅测试）",
+    "bin": "relay-stub",
+    "prompt": ["{prompt}"],
+    "model": ["--model", "{model}"],
+    "effort": ["--effort", "{effort}"],
+    "resume": [],
+    "extra": [],
+    "verified": "2026-11",
+    "notes": "不调用任何模型，只回显。tests/smoke.sh 用它验证 runner 本身。"
+  }
+}

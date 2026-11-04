@@ -1,0 +1,255 @@
+{
+  "$schema": "./schemas/pipeline.schema.json",
+  "version": 1,
+  "name": "default",
+  "description": "需求 → 可验收分支。两个人工闸门：需求冻结、契约冻结。",
+  "roles": {
+    "clarify": {
+      "tier": "high",
+      "title": "需求澄清"
+    },
+    "design_fe": {
+      "tier": "high",
+      "title": "前端方案"
+    },
+    "design_be": {
+      "tier": "high",
+      "title": "后端方案"
+    },
+    "dev_fe": {
+      "tier": "medium",
+      "title": "前端开发"
+    },
+    "dev_be": {
+      "tier": "medium",
+      "title": "后端开发"
+    },
+    "e2e_author": {
+      "tier": "high",
+      "title": "E2E 用例"
+    },
+    "review_complexity": {
+      "tier": "low",
+      "title": "复杂度审计"
+    },
+    "review_correctness": {
+      "tier": "high",
+      "title": "正确性评审"
+    },
+    "e2e_run": {
+      "tier": "low",
+      "title": "E2E 执行"
+    }
+  },
+  "nodes": [
+    {
+      "id": "00a-clarify",
+      "role": "clarify",
+      "stage": "stages/00a-clarify.md",
+      "deps": [],
+      "produces": [
+        "handoff/00a-assumptions.md"
+      ],
+      "isolate": false
+    },
+    {
+      "id": "00b-scope",
+      "role": null,
+      "kind": "human",
+      "stage": "stages/00b-scope.md",
+      "deps": [
+        "00a-clarify"
+      ],
+      "produces": [
+        "handoff/00b-scope.md"
+      ],
+      "gate": {
+        "prompt": "确认 scope.md：包含范围、不做清单（≥3 条）、可判定的验收标准。",
+        "check": "handoff/00b-scope.md"
+      }
+    },
+    {
+      "id": "01-fe-design",
+      "role": "design_fe",
+      "stage": "stages/01-design.md",
+      "deps": [
+        "00b-scope"
+      ],
+      "produces": [
+        "handoff/01-fe-design.md",
+        "skeleton/fe/"
+      ],
+      "isolate": true,
+      "vars": {
+        "SIDE": "frontend"
+      }
+    },
+    {
+      "id": "02-be-design",
+      "role": "design_be",
+      "stage": "stages/01-design.md",
+      "deps": [
+        "00b-scope"
+      ],
+      "produces": [
+        "handoff/02-be-design.md",
+        "skeleton/be/"
+      ],
+      "isolate": true,
+      "vars": {
+        "SIDE": "backend"
+      }
+    },
+    {
+      "id": "03-contract",
+      "role": null,
+      "kind": "human",
+      "stage": "stages/03-contract.md",
+      "deps": [
+        "01-fe-design",
+        "02-be-design"
+      ],
+      "produces": [
+        "contract/api.yaml",
+        "contract/checklist.md"
+      ],
+      "gate": {
+        "prompt": "冻结契约：按 references/contract-checklist.md 八项逐条确认，裁决两份方案的冲突。",
+        "check": "contract/api.yaml"
+      }
+    },
+    {
+      "id": "04-fe-dev",
+      "role": "dev_fe",
+      "stage": "stages/04-develop.md",
+      "deps": [
+        "00b-scope",
+        "01-fe-design",
+        "03-contract"
+      ],
+      "produces": [
+        "handoff/04-fe-dev.md",
+        "handoff/04-fe-deviations.md"
+      ],
+      "isolate": true,
+      "vars": {
+        "SIDE": "frontend",
+        "SKELETON": "skeleton/fe/"
+      }
+    },
+    {
+      "id": "05-be-dev",
+      "role": "dev_be",
+      "stage": "stages/04-develop.md",
+      "deps": [
+        "00b-scope",
+        "02-be-design",
+        "03-contract"
+      ],
+      "produces": [
+        "handoff/05-be-dev.md",
+        "handoff/05-be-deviations.md"
+      ],
+      "isolate": true,
+      "vars": {
+        "SIDE": "backend",
+        "SKELETON": "skeleton/be/"
+      }
+    },
+    {
+      "id": "07-e2e-author",
+      "role": "e2e_author",
+      "stage": "stages/07-e2e-author.md",
+      "deps": [
+        "00b-scope",
+        "03-contract"
+      ],
+      "produces": [
+        "e2e/"
+      ],
+      "isolate": true,
+      "blind": true,
+      "vars": {
+        "FORBIDDEN": "src/ 与任何实现分支"
+      }
+    },
+    {
+      "id": "06-merge",
+      "role": "dev_be",
+      "stage": "stages/06-merge.md",
+      "deps": [
+        "04-fe-dev",
+        "05-be-dev"
+      ],
+      "produces": [
+        "handoff/06-merge.md"
+      ],
+      "vars": {
+        "SIDE": "backend"
+      }
+    },
+    {
+      "id": "08-review-complexity",
+      "role": "review_complexity",
+      "stage": "stages/08-review-complexity.md",
+      "deps": [
+        "06-merge",
+        "04-fe-dev",
+        "05-be-dev"
+      ],
+      "produces": [
+        "handoff/08-complexity.md"
+      ],
+      "isolate": true
+    },
+    {
+      "id": "09-review-correctness",
+      "role": "review_correctness",
+      "stage": "stages/09-review-correctness.md",
+      "deps": [
+        "06-merge",
+        "04-fe-dev",
+        "05-be-dev"
+      ],
+      "produces": [
+        "handoff/09-correctness.md"
+      ],
+      "isolate": true
+    },
+    {
+      "id": "10-e2e-run",
+      "role": "e2e_run",
+      "stage": "stages/10-e2e-run.md",
+      "deps": [
+        "06-merge",
+        "07-e2e-author",
+        "08-review-complexity",
+        "09-review-correctness"
+      ],
+      "produces": [
+        "handoff/10-e2e-report.md"
+      ],
+      "isolate": true
+    }
+  ],
+  "loops": [
+    {
+      "from": "10-e2e-run",
+      "to": [
+        "04-fe-dev",
+        "05-be-dev"
+      ],
+      "on": "verdict == fail",
+      "maxRounds": 2,
+      "escalateTo": "03-contract",
+      "escalateWhen": "sameFailureClass >= 2",
+      "evidence": "handoff/10-e2e-report.md"
+    }
+  ],
+  "rules": {
+    "handoffIsFileOnly": true,
+    "coldStartPerRole": true,
+    "allowTestEditsByRunner": false,
+    "allowSilentDeviation": false
+  }
+}

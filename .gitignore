@@ -1,0 +1,21 @@
+# 本地配置（每个人自己的）
+pipeline.local.json
+
+# 运行时产物
+runs/
+handoff/
+contract/
+e2e/
+*.log
+state.json
+specs/
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
